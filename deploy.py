@@ -14,6 +14,9 @@ Reads credentials and known IPs from .env. Substitutes {{ROUTER_IP}},
 {{WIFI_SSID}}, and {{WIFI_PASSWORD}} into each script before uploading,
 so the files in configs/ contain no real credentials.
 
+If new-password differs from current-password in .env, the router password
+is changed after deploying and .env is updated automatically.
+
 Run with:  uv run deploy.py
        or: ./deploy.py  (if executable)
 
@@ -88,6 +91,23 @@ def upload(client, local_path, remote_path, substitutions):
     run(client, f"chmod 755 {shlex.quote(remote_path)}")
 
 
+def _update_env_password(new_password):
+    env_path = os.path.join(HERE, ".env")
+    try:
+        with open(env_path) as f:
+            lines = f.readlines()
+        with open(env_path, "w") as f:
+            for line in lines:
+                if line.startswith("current-password:"):
+                    f.write(f"current-password: {new_password}\n")
+                elif line.startswith("new-password:"):
+                    f.write(f"new-password: {new_password}\n")
+                else:
+                    f.write(line)
+    except Exception as e:
+        print(f"  Warning: could not update .env: {e}", file=sys.stderr)
+
+
 def list_configs():
     try:
         return sorted(f for f in os.listdir(CONFIGS_DIR) if f.endswith(".sh"))
@@ -115,29 +135,30 @@ def main():
     parser.add_argument("--password", help="SSH password (default: from .env)")
     args = parser.parse_args()
 
-    env      = read_env()
-    user     = args.user or env.get("username", "root")
-    password = args.password or env.get("password") or getpass.getpass(f"Password for {user}@router: ")
-    hosts    = env["hosts"]
+    env              = read_env()
+    user             = args.user or env.get("username", "root")
+    current_password = args.password or env.get("current-password") or getpass.getpass(f"Password for {user}@router: ")
+    new_password     = env.get("new-password", current_password)
+    hosts            = env["hosts"]
 
     # ── Find the router ───────────────────────────────────────────────
     host = args.host
     if host:
         try:
-            connect(host, user, password).close()
+            connect(host, user, current_password).close()
         except Exception:
             print(f"Could not connect to {host}", file=sys.stderr)
             sys.exit(1)
     else:
         print("Auto-detecting router...", end=" ", flush=True)
-        host = auto_detect_host(user, password, hosts)
+        host = auto_detect_host(user, current_password, hosts)
         if host:
             print(f"found at {host}")
         else:
             print("not found.")
             host = input("Router IP: ").strip()
             try:
-                connect(host, user, password).close()
+                connect(host, user, current_password).close()
             except Exception:
                 print(f"Could not connect to {host}", file=sys.stderr)
                 sys.exit(1)
@@ -163,16 +184,18 @@ def main():
     clear_ip = pick("Select IP for 'clear'", hosts)
 
     # ── Confirm ───────────────────────────────────────────────────────
-    print(f"\n  Router : {user}@{host}")
-    print(f"  dot    → {dot_script}  (IP: {dot_ip})")
-    print(f"  clear  → {clear_script}  (IP: {clear_ip})\n")
+    pw_status = "will change" if new_password != current_password else "unchanged"
+    print(f"\n  Router   : {user}@{host}")
+    print(f"  dot      → {dot_script}  (IP: {dot_ip})")
+    print(f"  clear    → {clear_script}  (IP: {clear_ip})")
+    print(f"  Password : {pw_status}\n")
 
     if input("Proceed? [y/N] ").strip().lower() != "y":
         print("Aborted.")
         sys.exit(0)
 
     # ── Deploy ────────────────────────────────────────────────────────
-    client = connect(host, user, password)
+    client = connect(host, user, current_password)
 
     base_subs = {
         "{{WIFI_SSID}}":     env.get("wifi-ssid", ""),
@@ -195,6 +218,15 @@ def main():
 
         size = run(client, f"wc -c < {shlex.quote(remote_path)}")
         print(f"  {position:5} → {remote_path} ({size} bytes, IP: {router_ip})")
+
+    if new_password != current_password:
+        print("  Changing router password...")
+        stdin, stdout, stderr = client.exec_command("passwd")
+        stdin.write(f"{new_password}\n{new_password}\n")
+        stdin.channel.shutdown_write()
+        stdout.read()
+        _update_env_password(new_password)
+        print("  Password changed and .env updated.")
 
     client.close()
     print("\nDone. Flip the switch to test.")
