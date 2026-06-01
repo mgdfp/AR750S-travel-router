@@ -1,7 +1,7 @@
 #!/bin/sh
 # Activate travel-router mode on GL-AR750S
 #
-# Result: 192.168.8.1/24, WAN port as DHCP uplink, NAT + firewall active,
+# Result: {{ROUTER_IP}}/24, WAN port as DHCP uplink, NAT + firewall active,
 # DHCP serving on LAN, visible SSIDs on both radios.
 #
 # Run via SSH. The script returns immediately; services restart in background.
@@ -10,7 +10,7 @@
 echo "[travel] Staging UCI changes..."
 
 # ── LAN interface ──────────────────────────────────────────────────────
-uci set network.lan.ipaddr='192.168.8.1/24'
+uci set network.lan.ipaddr='{{ROUTER_IP}}/24'
 uci set network.lan.ip6assign='60'
 uci delete network.lan.delegate               2>/dev/null; true
 uci delete network.lan.netmask                2>/dev/null; true
@@ -49,12 +49,12 @@ uci add_list dhcp.lan.ra_flags='other-config'
 
 # ── Wireless: restore visible SSIDs on both radios ────────────────────
 uci set wireless.default_radio0.ssid='AR750S-Travel-5G'
-uci set wireless.default_radio0.key='kszhvY2nxzpQCXoqbfA9D3AC'
+uci set wireless.default_radio0.key='{{WIFI_PASSWORD}}'
 uci set wireless.default_radio0.hidden='0'
 uci set wireless.default_radio0.disabled='0'
 
 uci set wireless.default_radio1.ssid='AR750S-Travel-2G'
-uci set wireless.default_radio1.key='kszhvY2nxzpQCXoqbfA9D3AC'
+uci set wireless.default_radio1.key='{{WIFI_PASSWORD}}'
 uci set wireless.default_radio1.hidden='0'
 uci set wireless.default_radio1.disabled='0'
 
@@ -65,7 +65,7 @@ uci commit dhcp
 uci commit wireless
 
 # ── Restart services in background ─────────────────────────────────────
-# SSH session will stay alive; network moves to 192.168.8.1 in ~15 seconds.
+# SSH session will stay alive; network moves to {{ROUTER_IP}} in ~15 seconds.
 echo "[travel] Restarting services in background..."
 (
     /etc/init.d/network restart
@@ -74,7 +74,7 @@ echo "[travel] Restarting services in background..."
     /etc/init.d/dnsmasq restart
     /etc/init.d/odhcpd restart
     /etc/init.d/firewall restart
-    logger -t mode-switch "Travel router mode active (192.168.8.1)"
+    logger -t mode-switch "Travel router mode active ({{ROUTER_IP}})"
 ) > /tmp/mode-switch.log 2>&1 &
 
-echo "[travel] Done. Router will be at 192.168.8.1 in ~15 seconds."
+echo "[travel] Done. Router will be at {{ROUTER_IP}} in ~15 seconds."

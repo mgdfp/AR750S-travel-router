@@ -10,6 +10,10 @@ Assigns one script from the configs/ folder to each physical switch position:
   dot   = one position of the slide switch
   clear = the other position
 
+Reads credentials and known IPs from .env. Substitutes {{ROUTER_IP}},
+{{WIFI_SSID}}, and {{WIFI_PASSWORD}} into each script before uploading,
+so the files in configs/ contain no real credentials.
+
 Run with:  uv run deploy.py
        or: ./deploy.py  (if executable)
 
@@ -18,7 +22,7 @@ Optional overrides:
   --user USER
   --password PASS
 """
-import argparse, getpass, os, shlex, sys
+import argparse, getpass, os, re, shlex, sys
 import paramiko
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,13 +32,18 @@ CONFIGS_DIR = os.path.join(HERE, "configs")
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def read_env():
-    env = {}
+    env = {"hosts": []}
     try:
         with open(os.path.join(HERE, ".env")) as f:
             for line in f:
-                if ":" in line:
-                    k, v = line.split(":", 1)
-                    env[k.strip()] = v.strip()
+                if ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                k, v = k.strip(), v.strip()
+                if re.match(r"router-static-ip-\d+$", k):
+                    env["hosts"].append(v)
+                else:
+                    env[k] = v
     except FileNotFoundError:
         pass
     return env
@@ -47,47 +56,17 @@ def connect(host, user, password):
     return c
 
 
-def scan_configs():
-    """
-    Scan all config scripts and extract:
-      - IPs from  uci set network.lan.ipaddr lines
-      - passwords from  # router-password: <value>  comment lines
-    Returns (ips, passwords) as lists of unique values.
-    """
-    import re
-    ips, passwords = [], []
-    try:
-        for name in sorted(os.listdir(CONFIGS_DIR)):
-            if not name.endswith(".sh"):
-                continue
-            with open(os.path.join(CONFIGS_DIR, name)) as f:
-                for line in f:
-                    if "network.lan.ipaddr" in line:
-                        m = re.search(r"(\d+\.\d+\.\d+\.\d+)", line)
-                        if m and m.group(1) not in ips:
-                            ips.append(m.group(1))
-                    if line.startswith("# router-password:"):
-                        pw = line.split(":", 1)[1].strip()
-                        if pw and pw not in passwords:
-                            passwords.append(pw)
-    except FileNotFoundError:
-        pass
-    return ips, passwords
-
-
-def auto_detect_host(user, passwords, ips):
-    """Try every combination of known IPs and passwords. Returns (host, password)."""
-    if not ips:
-        ips = ["192.168.8.1", "192.168.10.89"]
-    print(f"  (trying: {', '.join(ips)})")
-    for host in ips:
-        for pw in passwords:
-            try:
-                connect(host, user, pw).close()
-                return host, pw
-            except Exception:
-                pass
-    return None, None
+def auto_detect_host(user, password, hosts):
+    if not hosts:
+        hosts = ["192.168.8.1", "192.168.10.89"]
+    print(f"  (trying: {', '.join(hosts)})")
+    for host in hosts:
+        try:
+            connect(host, user, password).close()
+            return host
+        except Exception:
+            pass
+    return None
 
 
 def run(client, cmd):
@@ -95,9 +74,11 @@ def run(client, cmd):
     return stdout.read().decode().strip()
 
 
-def upload(client, local_path, remote_path):
+def upload(client, local_path, remote_path, substitutions):
     with open(local_path) as f:
         content = f.read()
+    for placeholder, value in substitutions.items():
+        content = content.replace(placeholder, value)
     stdin, stdout, _ = client.exec_command(
         f"tee {shlex.quote(remote_path)} > /dev/null"
     )
@@ -114,14 +95,13 @@ def list_configs():
         return []
 
 
-def pick_script(position, scripts):
-    print(f"\nAvailable scripts for '{position}' position:")
-    for i, name in enumerate(scripts, 1):
-        print(f"  {i}) {name}")
+def pick(prompt, options):
+    for i, opt in enumerate(options, 1):
+        print(f"  {i}) {opt}")
     while True:
-        choice = input(f"Select script for '{position}' [1-{len(scripts)}]: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(scripts):
-            return scripts[int(choice) - 1]
+        choice = input(f"{prompt} [1-{len(options)}]: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(options):
+            return options[int(choice) - 1]
         print("  Invalid choice, try again.")
 
 
@@ -135,81 +115,86 @@ def main():
     parser.add_argument("--password", help="SSH password (default: from .env)")
     args = parser.parse_args()
 
-    # ── Credentials & known IPs from configs ──────────────────────────
-    env  = read_env()
-    user = args.user or env.get("username", "root")
+    env      = read_env()
+    user     = args.user or env.get("username", "root")
+    password = args.password or env.get("password") or getpass.getpass(f"Password for {user}@router: ")
+    hosts    = env["hosts"]
 
-    config_ips, config_passwords = scan_configs()
-
-    # Build password candidates: explicit arg → .env → from config scripts
-    if args.password:
-        passwords = [args.password]
-    else:
-        passwords = []
-        if env.get("password"):
-            passwords.append(env["password"])
-        passwords += [p for p in config_passwords if p not in passwords]
-
-    if not passwords:
-        passwords = [getpass.getpass(f"Password for {user}@router: ")]
-
-    # ── Router IP ─────────────────────────────────────────────────────
+    # ── Find the router ───────────────────────────────────────────────
     host = args.host
     if host:
-        # Host given — still need to find the right password
-        password = None
-        for pw in passwords:
-            try:
-                connect(host, user, pw).close()
-                password = pw
-                break
-            except Exception:
-                pass
-        if not password:
-            print(f"Could not authenticate to {host}", file=sys.stderr)
+        try:
+            connect(host, user, password).close()
+        except Exception:
+            print(f"Could not connect to {host}", file=sys.stderr)
             sys.exit(1)
     else:
         print("Auto-detecting router...", end=" ", flush=True)
-        host, password = auto_detect_host(user, passwords, config_ips)
+        host = auto_detect_host(user, password, hosts)
         if host:
             print(f"found at {host}")
         else:
             print("not found.")
-            host      = input("Router IP: ").strip()
-            password  = getpass.getpass(f"Password for {user}@{host}: ")
+            host = input("Router IP: ").strip()
+            try:
+                connect(host, user, password).close()
+            except Exception:
+                print(f"Could not connect to {host}", file=sys.stderr)
+                sys.exit(1)
 
-    # ── Script selection ──────────────────────────────────────────────
+    # ── Script and IP selection ───────────────────────────────────────
     scripts = list_configs()
     if not scripts:
         print(f"No .sh scripts found in {CONFIGS_DIR}/", file=sys.stderr)
         sys.exit(1)
 
-    dot_script   = pick_script("dot",   scripts)
-    clear_script = pick_script("clear", scripts)
+    if not hosts:
+        print("No router-static-ip entries found in .env", file=sys.stderr)
+        sys.exit(1)
+
+    print("\nAvailable scripts for 'dot' position:")
+    dot_script = pick("Select script for 'dot'", scripts)
+    print("\nAvailable IPs for 'dot' position:")
+    dot_ip = pick("Select IP for 'dot'", hosts)
+
+    print("\nAvailable scripts for 'clear' position:")
+    clear_script = pick("Select script for 'clear'", scripts)
+    print("\nAvailable IPs for 'clear' position:")
+    clear_ip = pick("Select IP for 'clear'", hosts)
 
     # ── Confirm ───────────────────────────────────────────────────────
     print(f"\n  Router : {user}@{host}")
-    print(f"  dot    → {dot_script}")
-    print(f"  clear  → {clear_script}\n")
+    print(f"  dot    → {dot_script}  (IP: {dot_ip})")
+    print(f"  clear  → {clear_script}  (IP: {clear_ip})\n")
 
     if input("Proceed? [y/N] ").strip().lower() != "y":
         print("Aborted.")
         sys.exit(0)
 
     # ── Deploy ────────────────────────────────────────────────────────
-    client = connect(host, user, password)  # password resolved during detection
+    client = connect(host, user, password)
 
-    for position, script_name in [("dot", dot_script), ("clear", clear_script)]:
+    base_subs = {
+        "{{WIFI_SSID}}":     env.get("wifi-ssid", ""),
+        "{{WIFI_PASSWORD}}": env.get("wifi-password", ""),
+    }
+
+    for position, script_name, router_ip in [
+        ("dot",   dot_script,   dot_ip),
+        ("clear", clear_script, clear_ip),
+    ]:
         remote_dir  = f"/usr/sbin/{position}-active"
         remote_path = f"{remote_dir}/{script_name}"
         local_path  = os.path.join(CONFIGS_DIR, script_name)
 
+        subs = {**base_subs, "{{ROUTER_IP}}": router_ip}
+
         run(client, f"mkdir -p {shlex.quote(remote_dir)}")
         run(client, f"rm -f {shlex.quote(remote_dir)}/*.sh")
-        upload(client, local_path, remote_path)
+        upload(client, local_path, remote_path, subs)
 
         size = run(client, f"wc -c < {shlex.quote(remote_path)}")
-        print(f"  {position:5} → {remote_path} ({size} bytes)")
+        print(f"  {position:5} → {remote_path} ({size} bytes, IP: {router_ip})")
 
     client.close()
     print("\nDone. Flip the switch to test.")
