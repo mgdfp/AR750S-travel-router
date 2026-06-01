@@ -1,0 +1,23 @@
+#!/bin/sh
+# Hotplug handler for GL-AR750S physical slide switch.
+# Managed by slide-switch package — fires on each position change.
+#
+# dot   position → executes the script in /usr/sbin/dot-active/
+# clear position → executes the script in /usr/sbin/clear-active/
+#
+# To change what a position does, use deploy-to-dot.sh or deploy-to-clear.sh
+# from your local machine to push a new script into the appropriate folder.
+
+[ "$ACTION" = "pressed" ] || exit 0
+
+case "$BUTTON" in
+    mode-dot)   dir=/usr/sbin/dot-active ;;
+    mode-clear) dir=/usr/sbin/clear-active ;;
+    *)          exit 0 ;;
+esac
+
+for script in "$dir"/*.sh; do
+    [ -f "$script" ] && exec "$script"
+done
+
+logger -t mode-switch "No script found in $dir — nothing to do"
