@@ -58,11 +58,38 @@ uci set wireless.default_radio1.key='{{WIFI_PASSWORD}}'
 uci set wireless.default_radio1.hidden='0'
 uci set wireless.default_radio1.disabled='0'
 
+# ── Travelmate: wireless uplink for hotel/cafe WiFi + captive portals ──
+# trm_wwan is a station-mode interface on radio1 (2.4GHz — most hotel WiFi).
+# travelmate populates ssid/key/encryption at connect time via LuCI.
+# The ethernet WAN above remains and is used when a cable is plugged in.
+uci set network.trm_wwan=interface
+uci set network.trm_wwan.proto='dhcp'
+
+uci set wireless.trm_wwan=wifi-iface
+uci set wireless.trm_wwan.device='radio1'
+uci set wireless.trm_wwan.mode='sta'
+uci set wireless.trm_wwan.network='trm_wwan'
+uci set wireless.trm_wwan.ssid=''
+uci set wireless.trm_wwan.disabled='1'
+
+# Add trm_wwan to the WAN firewall zone so it gets NATted like ethernet WAN
+for i in $(seq 0 10); do
+    _name=$(uci -q get "firewall.@zone[$i].name") || break
+    [ "$_name" = "wan" ] && { uci add_list "firewall.@zone[$i].network"='trm_wwan'; break; }
+done
+
+uci set travelmate.global=travelmate
+uci set travelmate.global.trm_enabled='1'
+uci set travelmate.global.trm_captive='1'
+uci set travelmate.global.trm_iface='trm_wwan'
+
 # ── Commit to disk ─────────────────────────────────────────────────────
 echo "[travel] Committing..."
 uci commit network
 uci commit dhcp
 uci commit wireless
+uci commit firewall
+uci commit travelmate
 
 # ── Restart services in background ─────────────────────────────────────
 # SSH session will stay alive; network moves to {{ROUTER_IP}} in ~15 seconds.
@@ -74,6 +101,8 @@ echo "[travel] Restarting services in background..."
     /etc/init.d/dnsmasq restart
     /etc/init.d/odhcpd restart
     /etc/init.d/firewall restart
+    /etc/init.d/travelmate enable
+    /etc/init.d/travelmate restart
     logger -t mode-switch "Travel router mode active ({{ROUTER_IP}})"
 ) > /tmp/mode-switch.log 2>&1 &
 
