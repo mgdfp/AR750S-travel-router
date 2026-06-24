@@ -35,13 +35,16 @@ the relevant services in the background. The router is unreachable for roughly
 
 ## Modes
 
-### Travel router (`activate-travel.sh`)
+### Normal router (`normal-router.sh`)
 - IP: `192.168.8.1/24`
-- WAN port: DHCP uplink to internet
+- WAN port: DHCP uplink to internet (ethernet cable)
 - DHCP, NAT, and firewall active
 - Both Wi-Fi radios broadcasting visible SSIDs
+- **Travelmate** installed: connects the router itself to a hotel/cafe WiFi network
+  and handles captive portal login, so all your devices share one authenticated session.
+  Add uplink networks via LuCI → Services → Travelmate. Saved networks survive mode switches.
 
-### Industrial dumb switch (`activate-industrial.sh`)
+### Simple switch (`simple-switch.sh`)
 - IP: `192.168.10.89/24`
 - All three physical ports and both Wi-Fi radios on one flat L2 bridge
 - No DHCP, no routing, no firewall
@@ -53,10 +56,10 @@ the relevant services in the background. The router is unreachable for roughly
 
 ```
 AR750S-travel-router/
-├── .env                    SSH credentials (username, password)
+├── .env                    SSH credentials, IPs, and Wi-Fi secrets
 ├── configs/                All mode configuration scripts
-│   ├── activate-travel.sh
-│   └── activate-industrial.sh
+│   ├── normal-router.sh    Travel/hotel mode with travelmate
+│   └── simple-switch.sh    Industrial flat-bridge mode
 ├── 10-mode-switch          Source copy of the hotplug script on the router
 └── deploy.py               Deployment tool (see below)
 ```
@@ -90,11 +93,11 @@ uv run deploy.py --host 192.168.8.1 --user root --password yourpassword
 Without touching the physical switch, you can apply a mode directly:
 
 ```bash
-# From travel mode (192.168.8.1):
-ssh root@192.168.8.1 < configs/activate-industrial.sh
+# From normal-router mode (192.168.8.1):
+ssh root@192.168.8.1 < configs/simple-switch.sh
 
-# From industrial mode (192.168.10.89):
-ssh root@192.168.10.89 < configs/activate-travel.sh
+# From simple-switch mode (192.168.10.89):
+ssh root@192.168.10.89 < configs/normal-router.sh
 ```
 
 ---
@@ -129,6 +132,9 @@ configuration required.
 - `slide-switch` package installed (`apk add slide-switch`)
 - `/etc/hotplug.d/button/10-mode-switch` deployed (source: `10-mode-switch` in this repo)
 - `/usr/sbin/dot-active/` and `/usr/sbin/clear-active/` folders created
+- For `normal-router.sh`: `travelmate`, `luci-app-travelmate`, `curl`, `libcurl4`,
+  `libnghttp2-14`, and `iwinfo` installed (sideload from OpenWrt feeds if no internet —
+  see commit history for the procedure)
 
 ---
 
@@ -136,8 +142,17 @@ configuration required.
 
 ```
 username: root
-password: yourpassword
+current-password: yourpassword
+new-password: yourpassword
+router-static-ip-1: 192.168.8.1
+router-static-ip-2: 192.168.10.89
+wifi-ssid: yourssid
+wifi-password: yourwifipassword
 ```
+
+`current-password` is what the router has now. Set `new-password` to something
+different to rotate the password on next deploy — `deploy.py` will change it on
+the router and update `current-password` in this file automatically.
 
 ---
 

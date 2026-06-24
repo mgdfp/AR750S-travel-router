@@ -65,17 +65,25 @@ uci set wireless.default_radio1.disabled='0'
 uci set network.trm_wwan=interface
 uci set network.trm_wwan.proto='dhcp'
 
-uci set wireless.trm_wwan=wifi-iface
-uci set wireless.trm_wwan.device='radio1'
-uci set wireless.trm_wwan.mode='sta'
-uci set wireless.trm_wwan.network='trm_wwan'
-uci set wireless.trm_wwan.ssid=''
-uci set wireless.trm_wwan.disabled='1'
+# Only create trm_wwan skeleton on first run; skip on subsequent mode switches
+# so that hotel/cafe networks saved via LuCI are not wiped.
+uci -q get wireless.trm_wwan > /dev/null || {
+    uci set wireless.trm_wwan=wifi-iface
+    uci set wireless.trm_wwan.device='radio1'
+    uci set wireless.trm_wwan.mode='sta'
+    uci set wireless.trm_wwan.network='trm_wwan'
+    uci set wireless.trm_wwan.ssid=''
+    uci set wireless.trm_wwan.disabled='1'
+}
 
-# Add trm_wwan to the WAN firewall zone so it gets NATted like ethernet WAN
+# Add trm_wwan to the WAN firewall zone (del_list first to keep it unique)
 for i in $(seq 0 10); do
     _name=$(uci -q get "firewall.@zone[$i].name") || break
-    [ "$_name" = "wan" ] && { uci add_list "firewall.@zone[$i].network"='trm_wwan'; break; }
+    if [ "$_name" = "wan" ]; then
+        uci -q del_list "firewall.@zone[$i].network"='trm_wwan'
+        uci add_list "firewall.@zone[$i].network"='trm_wwan'
+        break
+    fi
 done
 
 uci set travelmate.global=travelmate
