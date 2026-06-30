@@ -14,7 +14,7 @@
       "tag": "proxy",
       "server": "vpn.morganpettersson.org",
       "server_port": 8443,
-      "uuid": "9041cfde-b8cb-4973-bfda-fc1edfb492b8",
+      "uuid": "{{VPN_UUID}}",
       "tls": {
         "enabled": true,
         "server_name": "www.microsoft.com",

@@ -11,8 +11,8 @@ Assigns one script from the configs/ folder to each physical switch position:
   clear = the other position
 
 Reads credentials and known IPs from .env. Substitutes {{ROUTER_IP}},
-{{WIFI_SSID}}, and {{WIFI_PASSWORD}} into each script before uploading,
-so the files in configs/ contain no real credentials.
+{{WIFI_SSID}}, {{WIFI_PASSWORD}}, and {{VPN_UUID}} into each script before
+uploading, so the files in configs/ and sing-box/ contain no real credentials.
 
 If new-password differs from current-password in .env, the router password
 is changed after deploying and .env is updated automatically.
@@ -200,6 +200,7 @@ def main():
     base_subs = {
         "{{WIFI_SSID}}":     env.get("wifi-ssid", ""),
         "{{WIFI_PASSWORD}}": env.get("wifi-password", ""),
+        "{{VPN_UUID}}":      env.get("vpn-uuid", ""),
     }
 
     for position, script_name, router_ip in [

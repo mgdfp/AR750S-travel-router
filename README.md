@@ -148,6 +148,7 @@ router-static-ip-1: 192.168.8.1
 router-static-ip-2: 192.168.10.89
 wifi-ssid: yourssid
 wifi-password: yourwifipassword
+vpn-uuid: your-vless-uuid-here
 ```
 
 `current-password` is what the router has now. Set `new-password` to something
@@ -177,11 +178,19 @@ the VPN is reachable, then adds the rule automatically.
 apk add sing-box
 ```
 
-Then copy the files from `sing-box/` in this repo:
+Then copy the files from `sing-box/` in this repo. `config.json` contains
+a `{{VPN_UUID}}` placeholder — substitute your VLESS UUID (from `.env`) before copying:
+
+```sh
+UUID=$(grep "^vpn-uuid:" .env | cut -d: -f2 | tr -d ' ')
+sed "s/{{VPN_UUID}}/$UUID/" sing-box/config.json \
+    | ssh root@192.168.8.1 'tee /etc/sing-box/config.json > /dev/null'
+```
+
+The other files copy as-is:
 
 | Repo file | Router destination | Notes |
 |---|---|---|
-| `config.json` | `/etc/sing-box/config.json` | |
 | `sing-box.uci` | `/etc/config/sing-box` | |
 | `30-sing-box.nft` | `/etc/nftables.d/30-sing-box.nft` | |
 | `30-sing-box-nat` | `/etc/hotplug.d/iface/30-sing-box-nat` | `chmod +x` |
