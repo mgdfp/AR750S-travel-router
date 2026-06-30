@@ -156,6 +156,65 @@ the router and update `current-password` in this file automatically.
 
 ---
 
+## Sing-box VPN
+
+All LAN TCP traffic is transparently tunnelled through a VLESS+WS+TLS proxy on port 8443.
+Devices need no configuration — they just get internet that bypasses DPI.
+
+### How it works
+
+An nft PREROUTING rule redirects all TCP from `br-lan` (except traffic to the router itself)
+to port 7895. Sing-box listens there with a `redirect` inbound, reads the original destination
+via `SO_ORIGINAL_DST`, and forwards through VLESS. UDP and private-IP traffic go direct.
+
+A hotplug script (`30-sing-box-nat`) manages the nft rule dynamically: if the VPN server
+is unreachable at boot (e.g. captive portal), it defers and polls every 15 seconds until
+the VPN is reachable, then adds the rule automatically.
+
+### Fresh install (requires internet on router)
+
+```sh
+apk add sing-box
+```
+
+Then copy the files from `sing-box/` in this repo:
+
+| Repo file | Router destination | Notes |
+|---|---|---|
+| `config.json` | `/etc/sing-box/config.json` | |
+| `sing-box.uci` | `/etc/config/sing-box` | |
+| `30-sing-box.nft` | `/etc/nftables.d/30-sing-box.nft` | |
+| `30-sing-box-nat` | `/etc/hotplug.d/iface/30-sing-box-nat` | `chmod +x` |
+
+Then enable and start the service:
+
+```sh
+/etc/init.d/sing-box enable
+/etc/init.d/sing-box start
+fw4 reload
+```
+
+The hotplug script fires automatically on next interface up/down. To trigger it immediately
+without rebooting, bounce the LAN interface or just add the nft rule by hand:
+
+```sh
+nft add table ip nat
+nft add chain ip nat PREROUTING '{ type nat hook prerouting priority -100; }'
+nft add rule ip nat PREROUTING iif br-lan ip protocol tcp ip daddr != 192.168.8.1 redirect to :7895
+```
+
+### Recovery (if VPN breaks routing)
+
+```sh
+# From laptop — flushes the redirect rule so plain internet works again
+sshpass -p 'YOUR_PASSWORD' ssh root@192.168.8.1 "nft flush chain ip nat PREROUTING"
+
+# To disable sing-box entirely until next reboot:
+sshpass -p 'YOUR_PASSWORD' ssh root@192.168.8.1 "killall sing-box; nft flush chain ip nat PREROUTING"
+```
+
+---
+
 ## Physical hardware notes
 
 - **Switch GPIO:** The slide switch is wired to GPIO 8 (`gpio-520` in sysfs),
