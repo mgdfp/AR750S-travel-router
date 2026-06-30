@@ -3,6 +3,9 @@
 # If behind a captive portal (VPN unreachable), skips the redirect so
 # devices can complete the portal login, then re-enables automatically.
 
+# Do nothing if sing-box is disabled (e.g. Mullvad mode is active).
+[ "$(uci -q get sing-box.main.enabled)" = "1" ] || exit 0
+
 VPN_HOST=vpn.morganpettersson.org
 VPN_PORT=8443
 PIDFILE=/tmp/sing-box-nat.pid

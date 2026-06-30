@@ -91,7 +91,7 @@ uci set travelmate.global.trm_enabled='1'
 uci set travelmate.global.trm_captive='1'
 uci set travelmate.global.trm_iface='trm_wwan'
 
-# ── Re-enable sing-box (may have been disabled by mullvad-router.sh) ───
+# ── Re-enable sing-box ─────────────────────────────────────────────────
 uci -q set sing-box.main.enabled='1'
 uci -q commit sing-box
 

@@ -117,7 +117,8 @@ for i in $(seq 0 10); do
     fi
 done
 
-# ── Disable sing-box (its nft PREROUTING redirect conflicts with WireGuard) ──
+# ── Disable sing-box ───────────────────────────────────────────────────
+# The hotplug script checks this flag and skips the nft redirect when disabled.
 uci -q set sing-box.main.enabled='0'
 uci -q commit sing-box
 
