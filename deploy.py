@@ -197,14 +197,24 @@ def main():
     # ── Deploy ────────────────────────────────────────────────────────
     client = connect(host, user, current_password)
 
+    # Mullvad endpoint is "host:port" — script only needs the host.
+    _mlvd_endpoint = env.get("mullvad-Endpoint", "")
+    _mlvd_endpoint_host = _mlvd_endpoint.rsplit(":", 1)[0] if _mlvd_endpoint else ""
+
+    # Address may be "ipv4/32,ipv6/128" — extract each part for separate uci add_list calls.
+    _mlvd_address_raw = env.get("mullvad-Address", "")
+    _mlvd_addresses   = [a.strip() for a in _mlvd_address_raw.split(",") if a.strip()]
+
     base_subs = {
         "{{WIFI_SSID}}":              env.get("wifi-ssid", ""),
         "{{WIFI_PASSWORD}}":          env.get("wifi-password", ""),
         "{{VPN_UUID}}":               env.get("vpn-uuid", ""),
-        "{{MULLVAD_PRIVATE_KEY}}":    env.get("mullvad-private-key", ""),
-        "{{MULLVAD_SERVER_PUBKEY}}":  env.get("mullvad-server-pubkey", ""),
-        "{{MULLVAD_ENDPOINT_HOST}}":  env.get("mullvad-endpoint-host", ""),
-        "{{MULLVAD_ADDRESS}}":        env.get("mullvad-address", ""),
+        "{{MULLVAD_PRIVATE_KEY}}":    env.get("mullvad-PrivateKey", ""),
+        "{{MULLVAD_SERVER_PUBKEY}}":  env.get("mullvad-PublicKey", ""),
+        "{{MULLVAD_ENDPOINT_HOST}}":  _mlvd_endpoint_host,
+        "{{MULLVAD_ADDRESS_IPV4}}":   _mlvd_addresses[0] if _mlvd_addresses else "",
+        "{{MULLVAD_ADDRESS_IPV6}}":   _mlvd_addresses[1] if len(_mlvd_addresses) > 1 else "",
+        "{{MULLVAD_DNS}}":            env.get("mullvad-DNS", ""),
     }
 
     for position, script_name, router_ip in [

@@ -40,8 +40,9 @@ uci -q delete network.wg0
 uci set network.wg0=interface
 uci set network.wg0.proto='wireguard'
 uci set network.wg0.private_key='{{MULLVAD_PRIVATE_KEY}}'
-uci add_list network.wg0.addresses='{{MULLVAD_ADDRESS}}'
-uci set network.wg0.dns='193.138.218.74'
+uci add_list network.wg0.addresses='{{MULLVAD_ADDRESS_IPV4}}'
+[ -n '{{MULLVAD_ADDRESS_IPV6}}' ] && uci add_list network.wg0.addresses='{{MULLVAD_ADDRESS_IPV6}}'
+uci set network.wg0.dns='{{MULLVAD_DNS}}'
 
 # Peer — section type wireguard_wg0 associates it with the wg0 interface
 uci -q delete network.mlvd
