@@ -1,0 +1,31 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "redirect",
+      "tag": "redirect-in",
+      "listen": "0.0.0.0",
+      "listen_port": 7895
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "vpn.morganpettersson.org",
+      "server_port": 8443,
+      "uuid": "9041cfde-b8cb-4973-bfda-fc1edfb492b8",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.microsoft.com",
+        "insecure": true,
+        "utls": { "enabled": true, "fingerprint": "chrome" }
+      },
+      "transport": { "type": "ws", "path": "/ws" }
+    },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "final": "proxy"
+  }
+}

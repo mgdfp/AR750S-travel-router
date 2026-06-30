@@ -1,0 +1,83 @@
+#!/bin/sh
+# sing-box transparent redirect — applied only when VPN is reachable.
+# If behind a captive portal (VPN unreachable), skips the redirect so
+# devices can complete the portal login, then re-enables automatically.
+
+VPN_HOST=vpn.morganpettersson.org
+VPN_PORT=8443
+PIDFILE=/tmp/sing-box-nat.pid
+
+vpn_reachable() {
+    # BusyBox nc on this router doesn't support -z; use curl instead.
+    # Exit 35 (TLS error) still means TCP connected = reachable.
+    # Only 6 (DNS), 7 (refused), 28 (timeout) mean unreachable.
+    curl --silent --connect-timeout 3 --max-time 5 \
+         --output /dev/null --insecure \
+         "https://$VPN_HOST:$VPN_PORT/" 2>/dev/null
+    local ret=$?
+    [ "$ret" != "6" ] && [ "$ret" != "7" ] && [ "$ret" != "28" ]
+}
+
+add_redirect() {
+    nft add table ip nat 2>/dev/null
+    nft add chain ip nat PREROUTING '{ type nat hook prerouting priority -100; }' 2>/dev/null
+    nft flush chain ip nat PREROUTING 2>/dev/null
+    nft add rule ip nat PREROUTING iif "br-lan" ip protocol tcp ip daddr != 192.168.8.1 redirect to :7895
+    logger -t sing-box-nat "redirect rule added"
+}
+
+flush_redirect() {
+    nft flush chain ip nat PREROUTING 2>/dev/null
+    logger -t sing-box-nat "redirect rule removed"
+}
+
+stop_waiter() {
+    [ -f "$PIDFILE" ] && kill "$(cat $PIDFILE)" 2>/dev/null
+    rm -f "$PIDFILE"
+}
+
+wait_and_add() {
+    stop_waiter
+    (
+        while true; do
+            sleep 15
+            if vpn_reachable; then
+                add_redirect
+                rm -f "$PIDFILE"
+                exit 0
+            fi
+        done
+    ) &
+    echo $! > "$PIDFILE"
+}
+
+case "$ACTION" in
+    ifup)
+        case "$INTERFACE" in
+            lan)
+                if vpn_reachable; then
+                    add_redirect
+                else
+                    logger -t sing-box-nat "LAN up — VPN unreachable (captive portal?), deferring"
+                    wait_and_add
+                fi
+                ;;
+            trm_wwan)
+                stop_waiter
+                flush_redirect
+                if vpn_reachable; then
+                    add_redirect
+                else
+                    logger -t sing-box-nat "trm_wwan up — VPN unreachable (captive portal?), deferring"
+                    wait_and_add
+                fi
+                ;;
+        esac
+        ;;
+    ifdown)
+        if [ "$INTERFACE" = "trm_wwan" ]; then
+            stop_waiter
+            flush_redirect
+        fi
+        ;;
+esac
