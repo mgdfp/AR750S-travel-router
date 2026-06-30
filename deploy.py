@@ -198,9 +198,13 @@ def main():
     client = connect(host, user, current_password)
 
     base_subs = {
-        "{{WIFI_SSID}}":     env.get("wifi-ssid", ""),
-        "{{WIFI_PASSWORD}}": env.get("wifi-password", ""),
-        "{{VPN_UUID}}":      env.get("vpn-uuid", ""),
+        "{{WIFI_SSID}}":              env.get("wifi-ssid", ""),
+        "{{WIFI_PASSWORD}}":          env.get("wifi-password", ""),
+        "{{VPN_UUID}}":               env.get("vpn-uuid", ""),
+        "{{MULLVAD_PRIVATE_KEY}}":    env.get("mullvad-private-key", ""),
+        "{{MULLVAD_SERVER_PUBKEY}}":  env.get("mullvad-server-pubkey", ""),
+        "{{MULLVAD_ENDPOINT_HOST}}":  env.get("mullvad-endpoint-host", ""),
+        "{{MULLVAD_ADDRESS}}":        env.get("mullvad-address", ""),
     }
 
     for position, script_name, router_ip in [

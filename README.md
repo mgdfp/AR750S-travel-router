@@ -149,7 +149,15 @@ router-static-ip-2: 192.168.10.89
 wifi-ssid: yourssid
 wifi-password: yourwifipassword
 vpn-uuid: your-vless-uuid-here
+mullvad-private-key: your-wireguard-private-key
+mullvad-server-pubkey: server-public-key
+mullvad-endpoint-host: 1.2.3.4
+mullvad-address: 10.x.x.x/32
 ```
+
+The four `mullvad-*` keys are only needed if you use `mullvad-router.sh`. Generate
+them from the [Mullvad account portal](https://mullvad.net/en/account/wireguard-config)
+— pick a server, download the WireGuard config, and copy the values across.
 
 `current-password` is what the router has now. Set `new-password` to something
 different to rotate the password on next deploy — `deploy.py` will change it on

@@ -1,13 +1,14 @@
 #!/bin/sh
-# Activate travel-router mode on GL-AR750S
+# Activate Mullvad VPN router mode on GL-AR750S
 #
 # Result: {{ROUTER_IP}}/24, WAN port as DHCP uplink, NAT + firewall active,
-# DHCP serving on LAN, visible SSIDs on both radios.
+# DHCP serving on LAN, visible SSIDs on both radios, all LAN TCP+UDP
+# tunnelled through Mullvad WireGuard. Travelmate handles captive portals.
 #
 # Run via SSH. The script returns immediately; services restart in background.
 # Router will be unreachable for ~15 seconds during the restart.
 
-echo "[travel] Staging UCI changes..."
+echo "[mullvad] Staging UCI changes..."
 
 # ── LAN interface ──────────────────────────────────────────────────────
 uci set network.lan.ipaddr='{{ROUTER_IP}}/24'
@@ -34,6 +35,25 @@ uci set network.wan6=interface
 uci set network.wan6.device='eth0.2'
 uci set network.wan6.proto='dhcpv6'
 
+# ── WireGuard tunnel (Mullvad) ─────────────────────────────────────────
+uci -q delete network.wg0
+uci set network.wg0=interface
+uci set network.wg0.proto='wireguard'
+uci set network.wg0.private_key='{{MULLVAD_PRIVATE_KEY}}'
+uci add_list network.wg0.addresses='{{MULLVAD_ADDRESS}}'
+uci set network.wg0.dns='193.138.218.74'
+
+# Peer — section type wireguard_wg0 associates it with the wg0 interface
+uci -q delete network.mlvd
+uci set network.mlvd=wireguard_wg0
+uci set network.mlvd.description='Mullvad'
+uci set network.mlvd.public_key='{{MULLVAD_SERVER_PUBKEY}}'
+uci set network.mlvd.endpoint_host='{{MULLVAD_ENDPOINT_HOST}}'
+uci set network.mlvd.endpoint_port='51820'
+uci add_list network.mlvd.allowed_ips='0.0.0.0/0'
+uci set network.mlvd.route_allowed_ips='1'
+uci set network.mlvd.persistent_keepalive='25'
+
 # ── DHCP: restore full serving on LAN ─────────────────────────────────
 uci set dhcp.lan.ignore='0'
 uci set dhcp.lan.start='100'
@@ -59,14 +79,9 @@ uci set wireless.default_radio1.hidden='0'
 uci set wireless.default_radio1.disabled='0'
 
 # ── Travelmate: wireless uplink for hotel/cafe WiFi + captive portals ──
-# trm_wwan is a station-mode interface on radio1 (2.4GHz — most hotel WiFi).
-# travelmate populates ssid/key/encryption at connect time via LuCI.
-# The ethernet WAN above remains and is used when a cable is plugged in.
 uci set network.trm_wwan=interface
 uci set network.trm_wwan.proto='dhcp'
 
-# Only create trm_wwan skeleton on first run; skip on subsequent mode switches
-# so that hotel/cafe networks saved via LuCI are not wiped.
 uci -q get wireless.trm_wwan > /dev/null || {
     uci set wireless.trm_wwan=wifi-iface
     uci set wireless.trm_wwan.device='radio1'
@@ -91,12 +106,22 @@ uci set travelmate.global.trm_enabled='1'
 uci set travelmate.global.trm_captive='1'
 uci set travelmate.global.trm_iface='trm_wwan'
 
-# ── Re-enable sing-box (may have been disabled by mullvad-router.sh) ───
-uci -q set sing-box.main.enabled='1'
+# ── Firewall: add wg0 to WAN zone ─────────────────────────────────────
+for i in $(seq 0 10); do
+    _name=$(uci -q get "firewall.@zone[$i].name") || break
+    if [ "$_name" = "wan" ]; then
+        uci -q del_list "firewall.@zone[$i].network"='wg0'
+        uci add_list "firewall.@zone[$i].network"='wg0'
+        break
+    fi
+done
+
+# ── Disable sing-box (its nft PREROUTING redirect conflicts with WireGuard) ──
+uci -q set sing-box.main.enabled='0'
 uci -q commit sing-box
 
 # ── Commit to disk ─────────────────────────────────────────────────────
-echo "[travel] Committing..."
+echo "[mullvad] Committing..."
 uci commit network
 uci commit dhcp
 uci commit wireless
@@ -105,8 +130,10 @@ uci commit travelmate
 
 # ── Restart services in background ─────────────────────────────────────
 # SSH session will stay alive; network moves to {{ROUTER_IP}} in ~15 seconds.
-echo "[travel] Restarting services in background..."
+echo "[mullvad] Restarting services in background..."
 (
+    /etc/init.d/sing-box stop 2>/dev/null; true
+    nft flush chain ip nat PREROUTING 2>/dev/null; true
     /etc/init.d/network restart
     sleep 5
     /sbin/wifi
@@ -115,8 +142,7 @@ echo "[travel] Restarting services in background..."
     /etc/init.d/firewall restart
     /etc/init.d/travelmate enable
     /etc/init.d/travelmate restart
-    /etc/init.d/sing-box start
-    logger -t mode-switch "Travel router mode active ({{ROUTER_IP}})"
+    logger -t mode-switch "Mullvad VPN mode active ({{ROUTER_IP}})"
 ) > /tmp/mode-switch.log 2>&1 &
 
-echo "[travel] Done. Router will be at {{ROUTER_IP}} in ~15 seconds."
+echo "[mullvad] Done. Router will be at {{ROUTER_IP}} in ~15 seconds."
