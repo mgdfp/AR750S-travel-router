@@ -3,7 +3,10 @@
 #
 # Result: {{ROUTER_IP}}/24, WAN port as DHCP uplink, NAT + firewall active,
 # DHCP serving on LAN, visible SSIDs on both radios, all LAN TCP+UDP
-# tunnelled through Mullvad WireGuard. Travelmate handles captive portals.
+# tunnelled through Mullvad WireGuard once real internet is confirmed.
+# 30-mullvad-gate (hotplug) holds wg0 off until then, and drops it again if
+# the uplink later loses connectivity (e.g. a captive portal re-locks),
+# so devices can always reach the portal to log in.
 #
 # Run via SSH. The script returns immediately; services restart in background.
 # Router will be unreachable for ~15 seconds during the restart.
@@ -27,18 +30,26 @@ uci set network.@switch_vlan[1].vlan='2'
 uci set network.@switch_vlan[1].ports='1 0t'
 
 # ── Restore WAN logical interfaces ────────────────────────────────────
+# Metric 10 (vs wg0's default metric 0) so wg0 always wins the default
+# route once it's up, but the plain uplink's own route is never disturbed
+# when wg0 is gated off — see 30-mullvad-gate.
 uci set network.wan=interface
 uci set network.wan.device='eth0.2'
 uci set network.wan.proto='dhcp'
+uci set network.wan.metric='10'
 
 uci set network.wan6=interface
 uci set network.wan6.device='eth0.2'
 uci set network.wan6.proto='dhcpv6'
 
 # ── WireGuard tunnel (Mullvad) ─────────────────────────────────────────
+# Starts disabled — 30-mullvad-gate brings it up only once the uplink has
+# confirmed real (non-captive-portal) internet, and takes it back down if
+# that connectivity is later lost (e.g. the portal re-locks).
 uci -q delete network.wg0
 uci set network.wg0=interface
 uci set network.wg0.proto='wireguard'
+uci set network.wg0.disabled='1'
 uci set network.wg0.private_key='{{MULLVAD_PRIVATE_KEY}}'
 uci add_list network.wg0.addresses='{{MULLVAD_ADDRESS_IPV4}}'
 [ -n '{{MULLVAD_ADDRESS_IPV6}}' ] && uci add_list network.wg0.addresses='{{MULLVAD_ADDRESS_IPV6}}'
@@ -80,8 +91,10 @@ uci set wireless.default_radio1.hidden='0'
 uci set wireless.default_radio1.disabled='0'
 
 # ── Travelmate: wireless uplink for hotel/cafe WiFi + captive portals ──
+# Metric 10 — see the wan section above for why.
 uci set network.trm_wwan=interface
 uci set network.trm_wwan.proto='dhcp'
+uci set network.trm_wwan.metric='10'
 
 uci -q get wireless.trm_wwan > /dev/null || {
     uci set wireless.trm_wwan=wifi-iface

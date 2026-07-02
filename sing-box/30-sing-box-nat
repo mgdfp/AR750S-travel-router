@@ -1,7 +1,10 @@
 #!/bin/sh
-# sing-box transparent redirect — applied only when VPN is reachable.
-# If behind a captive portal (VPN unreachable), skips the redirect so
-# devices can complete the portal login, then re-enables automatically.
+# sing-box transparent redirect — applied only while the real VPN server is
+# reachable. Runs a continuous background monitor (not a one-shot check) so
+# it also handles uplinks that repeatedly re-lock behind a captive portal
+# (e.g. a hotel network that forces re-login several times a day): whenever
+# reachability drops, the redirect is flushed so devices can re-login, then
+# re-applied automatically once the VPN is reachable again.
 
 # Do nothing if sing-box is disabled (e.g. Mullvad mode is active).
 [ "$(uci -q get sing-box.main.enabled)" = "1" ] || exit 0
@@ -9,16 +12,31 @@
 VPN_HOST=vpn.morganpettersson.org
 VPN_PORT=8443
 PIDFILE=/tmp/sing-box-nat.pid
+CHECK_INTERVAL=15
+# Under real background load (other devices' traffic sharing the single
+# VLESS+WS tunnel), a single check can occasionally time out even at 12s
+# (observed: connect-timeout hit with conntrack in the hundreds) with no
+# real connectivity problem. Require 2 consecutive failures (~30s) before
+# treating the VPN as down, so one blip doesn't flush the redirect.
+FAIL_THRESHOLD=2
 
 vpn_reachable() {
-    # BusyBox nc on this router doesn't support -z; use curl instead.
-    # Exit 35 (TLS error) still means TCP connected = reachable.
-    # Only 6 (DNS), 7 (refused), 28 (timeout) mean unreachable.
-    curl --silent --connect-timeout 3 --max-time 5 \
-         --output /dev/null --insecure \
-         "https://$VPN_HOST:$VPN_PORT/" 2>/dev/null
-    local ret=$?
-    [ "$ret" != "6" ] && [ "$ret" != "7" ] && [ "$ret" != "28" ]
+    # Mirror sing-box's real outbound: SNI spoofed to www.microsoft.com
+    # (some networks reset TLS on the real hostname's SNI via DPI, which
+    # is exactly what this spoof is for) and --insecure since the server's
+    # cert is self-signed (same as the sing-box config's "insecure": true).
+    # Require the exact 404 our own VLESS+WS server returns for a bare
+    # GET, so a captive portal's own content (or a TLS-bumping proxy)
+    # can't produce a false positive.
+    # max-time is generous (12s): the VLESS+WS+TLS handshake to the real
+    # server has been observed taking 5-7s under concurrent load, and a
+    # too-tight timeout here causes false "unreachable" flaps that flush
+    # the redirect and leak traffic outside the tunnel for no real reason.
+    code=$(curl --silent --connect-timeout 5 --max-time 12 \
+                --output /dev/null -w '%{http_code}' --insecure \
+                --connect-to "www.microsoft.com:$VPN_PORT:$VPN_HOST:$VPN_PORT" \
+                "https://www.microsoft.com:$VPN_PORT/" 2>/dev/null)
+    [ "$code" = "404" ]
 }
 
 add_redirect() {
@@ -26,29 +44,38 @@ add_redirect() {
     nft add chain ip nat PREROUTING '{ type nat hook prerouting priority -100; }' 2>/dev/null
     nft flush chain ip nat PREROUTING 2>/dev/null
     nft add rule ip nat PREROUTING iif "br-lan" ip protocol tcp ip daddr != 192.168.8.1 redirect to :7895
-    logger -t sing-box-nat "redirect rule added"
+    logger -t sing-box-nat "VPN reachable — redirect enabled"
 }
 
 flush_redirect() {
     nft flush chain ip nat PREROUTING 2>/dev/null
-    logger -t sing-box-nat "redirect rule removed"
+    logger -t sing-box-nat "VPN unreachable (captive portal?) — redirect disabled"
 }
 
-stop_waiter() {
-    [ -f "$PIDFILE" ] && kill "$(cat $PIDFILE)" 2>/dev/null
+stop_monitor() {
+    [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
     rm -f "$PIDFILE"
 }
 
-wait_and_add() {
-    stop_waiter
+start_monitor() {
+    stop_monitor
     (
+        state="down"
+        fails=0
+        flush_redirect
         while true; do
-            sleep 15
             if vpn_reachable; then
-                add_redirect
-                rm -f "$PIDFILE"
-                exit 0
+                fails=0
+                [ "$state" = "down" ] && add_redirect
+                state="up"
+            else
+                fails=$((fails + 1))
+                if [ "$state" = "up" ] && [ "$fails" -ge "$FAIL_THRESHOLD" ]; then
+                    flush_redirect
+                    state="down"
+                fi
             fi
+            sleep "$CHECK_INTERVAL"
         done
     ) &
     echo $! > "$PIDFILE"
@@ -57,30 +84,17 @@ wait_and_add() {
 case "$ACTION" in
     ifup)
         case "$INTERFACE" in
-            lan)
-                if vpn_reachable; then
-                    add_redirect
-                else
-                    logger -t sing-box-nat "LAN up — VPN unreachable (captive portal?), deferring"
-                    wait_and_add
-                fi
-                ;;
-            trm_wwan)
-                stop_waiter
-                flush_redirect
-                if vpn_reachable; then
-                    add_redirect
-                else
-                    logger -t sing-box-nat "trm_wwan up — VPN unreachable (captive portal?), deferring"
-                    wait_and_add
-                fi
+            lan|trm_wwan|wan)
+                start_monitor
                 ;;
         esac
         ;;
     ifdown)
-        if [ "$INTERFACE" = "trm_wwan" ]; then
-            stop_waiter
-            flush_redirect
-        fi
+        case "$INTERFACE" in
+            trm_wwan|wan)
+                stop_monitor
+                flush_redirect
+                ;;
+        esac
         ;;
 esac

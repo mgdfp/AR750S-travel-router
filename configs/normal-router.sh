@@ -34,6 +34,12 @@ uci set network.wan6=interface
 uci set network.wan6.device='eth0.2'
 uci set network.wan6.proto='dhcpv6'
 
+# ── Remove any leftover Mullvad WireGuard config from mullvad-router.sh ─
+# So that 30-mullvad-gate's guard (checks for network.wg0) correctly no-ops
+# while this mode is active.
+uci -q delete network.wg0
+uci -q delete network.mlvd
+
 # ── DHCP: restore full serving on LAN ─────────────────────────────────
 uci set dhcp.lan.ignore='0'
 uci set dhcp.lan.start='100'

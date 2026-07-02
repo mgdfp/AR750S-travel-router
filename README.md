@@ -44,6 +44,16 @@ the relevant services in the background. The router is unreachable for roughly
   and handles captive portal login, so all your devices share one authenticated session.
   Add uplink networks via LuCI → Services → Travelmate. Saved networks survive mode switches.
 
+### Mullvad router (`mullvad-router.sh`)
+- IP: `192.168.8.1/24`
+- Same as normal router mode, but all LAN traffic is tunnelled through Mullvad
+  WireGuard (`wg0`) instead of the sing-box home VPN.
+- `wg0` is held disabled until `30-mullvad-gate` (hotplug) confirms the uplink
+  has real, non-captive-portal internet — and drops it again if that
+  connectivity is later lost — so devices can always reach a captive portal
+  to log in, even on networks that force repeated re-logins. See
+  [Mullvad WireGuard VPN](#mullvad-wireguard-vpn) below.
+
 ### Simple switch (`simple-switch.sh`)
 - IP: `192.168.10.89/24`
 - All three physical ports and both Wi-Fi radios on one flat L2 bridge
@@ -58,9 +68,12 @@ the relevant services in the background. The router is unreachable for roughly
 AR750S-travel-router/
 ├── .env                    SSH credentials, IPs, and Wi-Fi secrets
 ├── configs/                All mode configuration scripts
-│   ├── normal-router.sh    Travel/hotel mode with travelmate
+│   ├── normal-router.sh    Travel/hotel mode with travelmate + sing-box
+│   ├── mullvad-router.sh   Travel/hotel mode with travelmate + Mullvad WireGuard
 │   └── simple-switch.sh    Industrial flat-bridge mode
-├── 10-mode-switch          Source copy of the hotplug script on the router
+├── sing-box/               Sing-box config + its hotplug gate script (30-sing-box-nat)
+├── 10-mode-switch          Source copy of the mode-switch hotplug script on the router
+├── 30-mullvad-gate         Source copy of the Mullvad wg0 hotplug gate on the router
 └── deploy.py               Deployment tool (see below)
 ```
 
@@ -176,9 +189,23 @@ An nft PREROUTING rule redirects all TCP from `br-lan` (except traffic to the ro
 to port 7895. Sing-box listens there with a `redirect` inbound, reads the original destination
 via `SO_ORIGINAL_DST`, and forwards through VLESS. UDP and private-IP traffic go direct.
 
-A hotplug script (`30-sing-box-nat`) manages the nft rule dynamically: if the VPN server
-is unreachable at boot (e.g. captive portal), it defers and polls every 15 seconds until
-the VPN is reachable, then adds the rule automatically.
+A hotplug script (`30-sing-box-nat`) manages the nft rule dynamically, and runs a
+continuous background monitor (checking every 15 seconds) rather than a one-shot
+check: whenever the VPN server becomes unreachable — at boot behind a captive
+portal, or later if a network re-locks and forces a re-login — it flushes the
+redirect so devices can reach the portal, then re-adds it automatically as soon
+as the VPN is reachable again.
+
+The reachability check mirrors sing-box's real outbound as closely as possible:
+it spoofs TLS SNI to `www.microsoft.com` (some networks reset the TLS handshake
+outright when they see the real VPN hostname as SNI — this is the same spoof
+the outbound itself uses to get through) and accepts the server's self-signed
+cert, but requires the exact `404` the VLESS+WS server returns for a bare GET —
+so a captive portal's own content, or a TLS-bumping proxy, can't produce a false
+positive. A single failed check doesn't flip the state; it takes 2 consecutive
+failures (~30 seconds) before the redirect is flushed, since one-off timeouts
+are expected under normal background load from other connected devices sharing
+the tunnel and shouldn't be treated as a captive portal.
 
 ### Fresh install (requires internet on router)
 
@@ -228,6 +255,46 @@ sshpass -p 'YOUR_PASSWORD' ssh root@192.168.8.1 "nft flush chain ip nat PREROUTI
 
 # To disable sing-box entirely until next reboot:
 sshpass -p 'YOUR_PASSWORD' ssh root@192.168.8.1 "killall sing-box; nft flush chain ip nat PREROUTING"
+```
+
+---
+
+## Mullvad WireGuard VPN
+
+All LAN traffic is tunnelled through Mullvad WireGuard (`wg0`) instead of the
+sing-box home VPN when `mullvad-router.sh` is active.
+
+### How it works
+
+`wg0` is configured with `disabled='1'` and stays that way until a hotplug script,
+`30-mullvad-gate`, confirms the uplink (`trm_wwan` or `wan`) has real internet —
+checked via a certificate-validated HTTPS request to a `generate_204` endpoint
+expecting an exact `204` response, so a captive portal can't fake it. Once
+confirmed, the script enables and brings up `wg0`.
+
+`trm_wwan` and `wan` carry an explicit metric of `10`, while `wg0` uses the
+default metric `0`. Whenever both are up, `wg0` wins the default route
+automatically — no manual route juggling needed. When `30-mullvad-gate` disables
+`wg0` again, the plain uplink's own (never-touched) default route is simply what's
+left, so devices behind the router can immediately reach a captive portal.
+
+Like `30-sing-box-nat`, this runs a continuous background monitor (every 15
+seconds), not a one-shot check — so on networks that force repeated re-logins
+throughout the day, the tunnel drops automatically as soon as connectivity is
+lost and re-establishes itself once you're back online, with no manual steps.
+
+### Deploying `30-mullvad-gate`
+
+```sh
+ssh root@192.168.8.1 'tee /etc/hotplug.d/iface/30-mullvad-gate > /dev/null' < 30-mullvad-gate
+ssh root@192.168.8.1 'chmod 755 /etc/hotplug.d/iface/30-mullvad-gate'
+```
+
+### Recovery (if the portal still isn't reachable)
+
+```sh
+# From laptop — force wg0 off and fall back to the plain uplink immediately
+ssh root@192.168.8.1 "uci set network.wg0.disabled=1; uci commit network; ifdown wg0"
 ```
 
 ---

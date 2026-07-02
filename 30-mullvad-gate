@@ -1,0 +1,88 @@
+#!/bin/sh
+# Mullvad WireGuard gate — wg0 is only brought up while the underlying
+# uplink (trm_wwan or wan) has real, unhijacked internet. Runs a continuous
+# background monitor (not a one-shot check) so it also handles uplinks that
+# repeatedly re-lock behind a captive portal (e.g. a hotel network that
+# forces re-login several times a day): whenever connectivity drops, wg0 is
+# disabled so devices can re-login, then the tunnel is re-established
+# automatically once real internet is confirmed again.
+#
+# wg0's peer (network.mlvd) has route_allowed_ips='1', which makes netifd
+# install a default route for wg0 whenever it's up. trm_wwan/wan carry an
+# explicit higher metric (see mullvad-router.sh) so that whenever wg0 is
+# also up, it wins the default route outright — no manual `ip route`
+# juggling needed. Tearing wg0 down cleanly removes its route and the
+# plain uplink's own (never-touched) default route is used instead.
+
+# Only act when Mullvad mode is active (wg0 configured).
+[ "$(uci -q get network.wg0)" = "interface" ] || exit 0
+
+CHECK_URL="https://connectivitycheck.gstatic.com/generate_204"
+PIDFILE=/tmp/mullvad-gate.pid
+CHECK_INTERVAL=15
+
+internet_reachable() {
+    # Cert-validated (no --insecure) + exact 204 check: a captive portal
+    # can't produce a valid cert for gstatic.com, and even if some proxy
+    # let TLS through, it can't fake an empty HTTP 204 for this specific URL.
+    code=$(curl --silent --connect-timeout 3 --max-time 5 \
+                --output /dev/null -w '%{http_code}' \
+                "$CHECK_URL" 2>/dev/null)
+    [ "$code" = "204" ]
+}
+
+bring_up() {
+    uci set network.wg0.disabled='0'
+    uci commit network
+    ifup wg0
+    logger -t mullvad-gate "internet confirmed — wg0 up"
+}
+
+tear_down() {
+    uci set network.wg0.disabled='1'
+    uci commit network
+    ifdown wg0 2>/dev/null
+    logger -t mullvad-gate "no internet (captive portal?) — wg0 down"
+}
+
+stop_monitor() {
+    [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+}
+
+start_monitor() {
+    stop_monitor
+    (
+        state="down"
+        tear_down
+        while true; do
+            if internet_reachable; then
+                [ "$state" = "down" ] && bring_up
+                state="up"
+            else
+                [ "$state" = "up" ] && tear_down
+                state="down"
+            fi
+            sleep "$CHECK_INTERVAL"
+        done
+    ) &
+    echo $! > "$PIDFILE"
+}
+
+case "$ACTION" in
+    ifup)
+        case "$INTERFACE" in
+            trm_wwan|wan)
+                start_monitor
+                ;;
+        esac
+        ;;
+    ifdown)
+        case "$INTERFACE" in
+            trm_wwan|wan)
+                stop_monitor
+                tear_down
+                ;;
+        esac
+        ;;
+esac
