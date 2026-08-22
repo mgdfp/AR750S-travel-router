@@ -1,4 +1,0 @@
-chain user_pre_input {
-    type filter hook input priority -1; policy accept;
-    tcp dport 7895 accept
-}

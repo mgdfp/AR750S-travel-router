@@ -97,10 +97,6 @@ uci set travelmate.global.trm_enabled='1'
 uci set travelmate.global.trm_captive='1'
 uci set travelmate.global.trm_iface='trm_wwan'
 
-# ── Re-enable sing-box ─────────────────────────────────────────────────
-uci -q set sing-box.main.enabled='1'
-uci -q commit sing-box
-
 # ── Commit to disk ─────────────────────────────────────────────────────
 echo "[travel] Committing..."
 uci commit network
@@ -121,7 +117,6 @@ echo "[travel] Restarting services in background..."
     /etc/init.d/firewall restart
     /etc/init.d/travelmate enable
     /etc/init.d/travelmate restart
-    /etc/init.d/sing-box start
     logger -t mode-switch "Travel router mode active ({{ROUTER_IP}})"
 ) > /tmp/mode-switch.log 2>&1 &
 
