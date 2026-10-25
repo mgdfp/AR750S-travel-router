@@ -17,6 +17,11 @@ running plain OpenWrt 25.12.6, set up as a single-mode travel router.
   portal detection, so all devices share one authenticated session. Wi-Fi is
   the only uplink: all three ethernet ports, including the blue WAN port, are
   LAN ports. See [Wired internet](#wired-internet) to change that.
+- **2.4 GHz uplink only:** travelmate is restricted to `radio1`. Scanning on
+  the 5 GHz chip (QCA9887, `ath10k-ct`) while it runs an access point crashes
+  its firmware ("SWBA overrun", then a chip reset), so 5 GHz scans come back
+  empty and 5 GHz clients drop. Hotels almost always broadcast on 2.4 GHz too,
+  and the 5 GHz access point stays stable for your devices.
 - **Uplink card** at the top of LuCI's Status → Overview: online / captive
   portal (with a link to its login page) / no internet, uplink SSID, signal and
   address. The internet check (`/usr/libexec/uplink-check`) runs every 30 s
@@ -74,11 +79,15 @@ a fresh router.
 
 ## Using it while travelling
 
-1. Connect to one of the `DIRECT-…` networks.
-2. Open LuCI at <http://10.90.91.1> → **Services → Travelmate** → scan and add
-   the hotel/cafe network. Saved uplinks are tried automatically from then on.
-3. If the network has a captive portal, open any http page from a device and log
-   in. Travelmate detects when the portal has been passed.
+1. Connect to one of the `DIRECT-…` networks. Join them once at home with every
+   device so they reconnect on their own.
+2. Open LuCI at <http://10.90.91.1> and click **Manage uplink networks →** on the
+   Uplink card. **Scan** on `radio1` (2.4 GHz), pick the hotel/cafe network,
+   **Add Uplink**, then **Save & Apply**. Saved uplinks are tried automatically
+   from then on.
+3. If the network has a captive portal, it should pop up on your device. If not,
+   the Uplink card turns orange with an **Open login page** link. Log in once;
+   every device behind the router shares that session.
 
 ---
 

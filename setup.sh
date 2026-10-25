@@ -104,6 +104,10 @@ uci set wireless.trm_wwan.disabled='1'
 uci set travelmate.global.trm_enabled='1'
 uci set travelmate.global.trm_captive='1'
 uci set travelmate.global.trm_iface='trm_wwan'
+# 2.4 GHz uplinks only: scanning on the 5 GHz QCA9887 (ath10k-ct) while it runs
+# an AP crashes its firmware ("SWBA overrun", then a chip reset) and returns
+# nothing. Hotels broadcast on 2.4 GHz too, and the 5 GHz AP stays stable.
+uci set travelmate.global.trm_radio="$radio_2g"
 /etc/init.d/travelmate enable
 
 uci commit
