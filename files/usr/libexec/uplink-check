@@ -1,0 +1,12 @@
+#!/bin/sh
+# Internet state of the router's uplink, for the LuCI "Uplink" status card.
+# Prints "ok", "offline" or "portal <redirect url, if any>".
+
+r=$(curl -s -m 5 -o /dev/null -w '%{http_code} %{redirect_url}' \
+	http://connectivitycheck.gstatic.com/generate_204)
+
+case "$r" in
+	204*) echo ok ;;
+	000*) echo offline ;;
+	*) echo "portal ${r#* }" ;;
+esac

@@ -90,6 +90,9 @@ cmd_configure() {
 	echo "Waiting for $lan_ip..."
 	until router_ssh "$lan_ip" "" true 2>/dev/null; do sleep 5; done
 
+	# Extra files (e.g. the LuCI "Uplink" card), laid out as on the router.
+	tar cf - --owner=0 --group=0 -C "$HERE/files" . | router_ssh "$lan_ip" "" 'tar xf - -C /'
+
 	local pubkey
 	pubkey=$(cat ~/.ssh/id_ed25519.pub 2>/dev/null || cat ~/.ssh/id_rsa.pub)
 

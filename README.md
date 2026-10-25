@@ -17,6 +17,10 @@ running plain OpenWrt 25.12.6, set up as a single-mode travel router.
   portal detection, so all devices share one authenticated session. Wi-Fi is
   the only uplink: all three ethernet ports, including the blue WAN port, are
   LAN ports. See [Wired internet](#wired-internet) to change that.
+- **Uplink card** at the top of LuCI's Status → Overview: online / captive
+  portal (with a link to its login page) / no internet, uplink SSID, signal and
+  address. The internet check (`/usr/libexec/uplink-check`) runs every 30 s
+  while the page is open.
 - **SSH:** key auth with `~/.ssh/id_ed25519.pub` (or `id_rsa.pub`), password
   login kept as a fallback. LuCI uses the same root password.
 
@@ -31,6 +35,8 @@ AR750S-travel-router/
 ├── .env           Credentials, IP, SSIDs, Wi-Fi password (gitignored)
 ├── provision.sh   Laptop-side tool: backup, flash, configure
 ├── setup.sh       Router-side configuration, piped over SSH by provision.sh
+├── files/         Extra files copied to the router as-is (same paths), e.g.
+│                  the LuCI Uplink card and its rpcd ACL
 └── .cache/        Downloaded firmware images (gitignored)
 ```
 

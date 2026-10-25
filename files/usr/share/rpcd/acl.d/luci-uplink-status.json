@@ -1,0 +1,16 @@
+{
+	"luci-uplink-status": {
+		"description": "Grant access to the Uplink card on Status → Overview",
+		"read": {
+			"file": {
+				"/var/run/travelmate/travelmate.runtime.json": [ "read" ],
+				"/usr/libexec/uplink-check": [ "exec" ]
+			},
+			"ubus": {
+				"file": [ "read", "exec" ],
+				"network.interface": [ "status" ],
+				"iwinfo": [ "info" ]
+			}
+		}
+	}
+}
