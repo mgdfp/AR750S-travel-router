@@ -14,8 +14,9 @@ running plain OpenWrt 25.12.6, set up as a single-mode travel router.
   - WPA2/WPA3 mixed (`sae-mixed`), password from `.env`
 - **Hostname** `HP24A5E3`, which is what upstream hotel/cafe DHCP servers see
 - **Travelmate:** the router joins hotel/cafe Wi-Fi itself and handles captive
-  portal detection, so all devices share one authenticated session. A wired WAN
-  connection, when plugged in, takes priority over the Wi-Fi uplink.
+  portal detection, so all devices share one authenticated session. Wi-Fi is
+  the only uplink: all three ethernet ports, including the blue WAN port, are
+  LAN ports. See [Wired internet](#wired-internet) to change that.
 - **SSH:** key auth with `~/.ssh/id_ed25519.pub` (or `id_rsa.pub`), password
   login kept as a fallback. LuCI uses the same root password.
 
@@ -38,24 +39,27 @@ AR750S-travel-router/
 ## Rebuilding the router
 
 The laptop must be on a **LAN port** (a fresh OpenWrt has Wi-Fi off), and the
-**WAN port** must be plugged into a network with internet so `travelmate` can be
-installed.
+blue **WAN port** must be plugged into a network with internet so `travelmate`
+can be installed. `setup.sh` turns the WAN port into a LAN port at the end.
 
 ```bash
 ./provision.sh backup            # optional: save the current config first
-./provision.sh flash 10.90.91.1  # wipes everything; asks you to type 'flash'
-# wait ~3 minutes; the router comes back at 192.168.1.1
+./provision.sh flash             # wipes everything; asks you to type 'flash'
+# wait ~3 minutes; the router comes back at 10.90.91.1
 ./provision.sh configure         # installs travelmate, applies setup.sh, reboots
 ```
 
 `flash` downloads the sysupgrade image into `.cache/`, checks it against the
 official `sha256sums`, uploads it, checks it again on the router and runs
-`sysupgrade -n` (no settings kept). The host argument defaults to `router-ip`
-from `.env`; pass the router's current IP if it is somewhere else.
+`sysupgrade -f` with a config archive holding a single first-boot script that
+sets the LAN IP. Nothing else is kept. The new LAN IP avoids OpenWrt's default
+`192.168.1.1/24`, which often clashes with the network on the WAN port. The host
+argument defaults to `router-ip` from `.env`; pass the router's current IP if it
+is somewhere else.
 
-`configure` waits for the router at `192.168.1.1`, pipes `setup.sh` (with the
-`.env` values prepended) to it over SSH, and reboots it to `10.90.91.1`. Renew
-DHCP on the laptop afterwards.
+`configure` waits for the router at `10.90.91.1`, pipes `setup.sh` (with the
+`.env` values prepended) to it over SSH, and reboots it. Renew DHCP on the
+laptop if needed.
 
 `setup.sh` can be reviewed or changed freely. It is plain `uci` and runs once on
 a fresh router.
@@ -69,6 +73,40 @@ a fresh router.
    the hotel/cafe network. Saved uplinks are tried automatically from then on.
 3. If the network has a captive portal, open any http page from a device and log
    in. Travelmate detects when the portal has been passed.
+
+---
+
+## Wired internet
+
+By default there is no WAN. The WAN port sits behind the router's internal
+switch chip, so Linux never sees its cable being unplugged. A wired WAN would
+keep a stale default route after unplugging and silently blackhole all traffic,
+even with a working Wi-Fi uplink.
+
+To use the blue port as a wired uplink, for example a hotel room with an
+ethernet socket:
+
+```sh
+ssh root@10.90.91.1 '
+uci set network.@switch_vlan[0].ports="2 3 0t"
+s=$(uci add network switch_vlan)
+uci set network.$s.device=switch0; uci set network.$s.vlan=2; uci set network.$s.ports="1 0t"
+uci set network.wan=interface; uci set network.wan.device=eth0.2; uci set network.wan.proto=dhcp
+uci add_list firewall.@zone[1].network=wan
+uci commit; reload_config'
+```
+
+To make it a LAN port again (do this before unplugging, or the stale route
+problem above applies):
+
+```sh
+ssh root@10.90.91.1 '
+uci delete network.@switch_vlan[1]
+uci set network.@switch_vlan[0].ports="1 2 3 0t"
+uci delete network.wan
+uci del_list firewall.@zone[1].network=wan
+uci commit; reload_config'
+```
 
 ---
 

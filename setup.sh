@@ -47,6 +47,25 @@ wan_zone=$(uci show firewall | sed -n "s/^firewall\.\(@zone\[[0-9]*\]\)\.name='w
 uci -q del_list firewall."$wan_zone".network='trm_wwan' || true
 uci add_list firewall."$wan_zone".network='trm_wwan'
 
+# ── Ports: all three ethernet ports are LAN, internet only via the Wi-Fi uplink ─
+# The WAN port sits behind the switch chip, so Linux never sees its cable being
+# unplugged and a stale wan default route would blackhole all traffic. The
+# packages above were installed over WAN; it is dropped from here on.
+
+for s in $(uci show network | sed -n "s/^network\.\(@switch_vlan\[[0-9]*\]\)=switch_vlan$/\1/p"); do
+	case "$(uci -q get network."$s".vlan)" in
+		1) lan_vlan=$s ;;
+		2) wan_vlan=$s ;;
+	esac
+done
+[ -n "$wan_vlan" ] && uci delete network."$wan_vlan"
+uci set network."$lan_vlan".ports='1 2 3 0t'	# AR750S: port 1 is the old WAN
+
+uci -q delete network.wan || true
+uci -q delete network.wan6 || true
+uci -q del_list firewall."$wan_zone".network='wan' || true
+uci -q del_list firewall."$wan_zone".network='wan6' || true
+
 # ── Wireless ──────────────────────────────────────────────────────────────────
 
 for r in $(uci show wireless | sed -n "s/^wireless\.\([^.=]*\)=wifi-device$/\1/p"); do
